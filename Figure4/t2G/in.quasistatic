@@ -1,0 +1,224 @@
+# =======================================================
+#  Quasistatic simulations with springs
+# =======================================================
+
+variable  nl  equal 2 # no. of flake layers
+#variable  l0  equal 25.6    # nm side length
+#variable  k0    equal 1592.0    # N/m, spring stiffness for single layer
+variable  dx  equal 0.02    # A displacement
+variable    loop0   equal   0
+variable    loop1   equal ${loop0}+1
+variable    loopn   equal   500
+
+processors          * * 1
+units                       metal
+atom_style      full
+boundary        p p p
+
+#read_data               data.${l0}nm.square.${nl}l.gr.dummy.min
+read_data               BLBLNew.mol
+
+# =======================================================================
+#  Atomic types: 1-H, 2-dummy atom, 5-B, 6-C, 7-N
+# =======================================================================
+
+#pair_style  hybrid/overlay rebo tersoff shift -3.81432E-3  coul/shield 16.0 ilp/graphene/hbn/opt 16.0 1
+#
+#pair_coeff  * * rebo        CH.rebo         H NULL C C NULL C NULL
+#pair_coeff  * * tersoff BNC.tersoff NULL NULL NULL NULL B NULL N 
+#pair_coeff  * * ilp/graphene/hbn/opt BNCH.ILP   H NULL C C B C N
+#pair_coeff  5 5 coul/shield 0.70
+#pair_coeff  5 7 coul/shield 0.69498201415576216335
+#pair_coeff  7 7 coul/shield 0.69
+#pair_coeff  1*2 2 none
+#pair_coeff  2 3*7 none
+pair_style hybrid/overlay drip rebo
+pair_coeff * * rebo CH.rebo H C
+pair_coeff * * drip  C.drip NULL C
+
+# =====================================================
+# Atomic group definition
+# =====================================================
+
+#group       sub1l       molecule 1
+#group       sub2l       molecule 2
+#group       sub3l       molecule 3
+group       sub1l       id 1:6536
+#group       sub2l       id 2775:5548
+group       substrate   id 1:6536
+
+#group       tip1l       molecule 4
+#group       tip2l       molecule 5
+#group       tip3l       molecule 6
+#group       tip         molecule 4 5 6
+group       tip1l        id 6537:9180
+group       tip          id 6537:9180
+
+#group       boron           type 5
+#group       nitride     type 7
+#group       hydrogen    type 1
+#group       carbon      type 6
+group       carbon      type 2
+
+group       tip1lc      intersect tip1l carbon
+
+#group       dummy           type 2
+
+# =====================================================
+# Neighbor list setting
+# =====================================================
+
+neighbor    0.5 bin
+neigh_modify    every 1 delay 0 check yes page 1000000 one 50000
+#neigh_modify    exclude group sub3l sub3l
+
+# =====================================================
+# Compute definition
+# =====================================================
+
+compute     re          all pair rebo
+compute     drip         all pair drip
+variable    REBO    equal c_re
+variable    DRIP     equal c_drip
+
+#compute     fortd   dummy   reduce sum fx fy fz
+compute     fortd   tip   reduce sum fx fy fz
+
+# =====================================================
+# Define variables
+# =====================================================
+
+variable    mC  equal 12.0107               # atomic mass of Carbon
+#variable    mB  equal 10.811                # atomic mass of Boron
+#variable    mN  equal 14.0067               # atomic mass of Nitride
+#variable    mH  equal 1.00794               # atomic mass of Hydrogen
+
+variable    xt1x equal xcm(tip1l,x)             # x component of c.o.m of top layer of tip 
+variable    xt1y equal xcm(tip1l,y)             # y component of c.o.m of top layer of tip
+variable    xt1z equal xcm(tip1l,z)             # z component of c.o.m of top layer of tip
+
+variable    xt1cx equal xcm(tip1lc,x)           # x component of c.o.m of top layer C of tip 
+variable    xt1cy equal xcm(tip1lc,y)           # y component of c.o.m of top layer C of tip
+variable    xt1cz equal xcm(tip1lc,z)           # z component of c.o.m of top layer C of tip
+
+#variable    xdx equal xcm(dummy,x)              # x coordinate of dummy atom
+#variable    xdy equal xcm(dummy,y)              # y coordinate of dummy atom
+#variable    xdz equal xcm(dummy,z)              # z coordinate of dummy atom
+
+# =========================================================
+# Normal load compnent on C atoms in tip1l
+# =========================================================
+
+variable    convert2  equal 1.6021765e0
+variable    fnorm       equal   -1.0/${convert2}
+
+# =========================================================
+# Output thermodynamic information
+# =========================================================
+
+thermo          100
+thermo_style    custom step cpu temp ke pe etotal fmax fnorm v_REBO v_DRIP v_xt1x v_xt1y v_xt1z #v_xdx v_xdy v_xdz
+thermo_modify   flush yes format float %20.10g
+
+# =============================================================================
+# Impose spring force
+# =============================================================================
+
+#variable    k1      equal   ${k0}/(${nl}-3) # spring stiffness for the implicit nl-3 layers 
+#fix             spr1    tip1lc  spring couple dummy ${k1} 0.0 0.0 NULL 0.0
+#fix_modify  spr1    energy  yes
+
+# =============================================================================
+# Add normal load and keep the tip1l flat and rigid
+# =============================================================================
+
+fix                 avec1   tip1lc  aveforce 0.0 0.0 ${fnorm}
+
+# ================================================================
+# Set the atomic forces on the bottom layer and dummy atom to zero 
+# ===============================================================
+
+fix     freeze0 tip setforce 0.0 0.0 NULL
+fix   freeze1 sub1l setforce 0.0 0.0 0.0
+
+# =========================================================
+# minimization of sub using cg and fire algorithms
+# =========================================================
+
+min_style   cg
+minimize    1.0e-18 1.0e-18 1000000 1000000
+
+min_style   fire
+minimize    0.0 2.0e-4 1000000 1000000
+
+# ===============================================================
+# Output the minimized structure and the force on the dummy atom
+# ===============================================================
+
+unfix   freeze0
+fix     output1 all ave/time 1 1 1 c_fortd[1] c_fortd[2] c_fortd[3]  file force.${loop0}.txt
+dump    dump2   all custom 1 dump.${nl}l.loop_${loop0}.lammpstrj id mol type x y z
+run     0  
+undump dump2
+unfix   output1
+
+# =========================================================
+# Output data file
+# =========================================================
+
+#write_data  data.25.6nm.square.${nl}l.gr.min.${loop0}
+write_data               data.periodic.${nl}l.t2G.min.${loop0}
+
+# =============================================================================
+# Displace the dummy atom using a loop
+# =============================================================================
+
+label       loop_th
+variable    i loop ${loop1} ${loopn}
+    variable ii equal $i
+    variable disp equal $i*${dx}
+    
+        displace_atoms tip move ${dx} 0 0 units box
+        
+# =========================================================
+# minimization of sub using cg and fire algorithms
+# =========================================================
+
+fix     freeze0 tip setforce 0.0 0.0 NULL
+
+min_style   cg
+minimize    1.0e-18 1.0e-18 1000000 1000000
+
+min_style   fire
+minimize    0.0 2.0e-4 1000000 1000000
+
+# ==============================================================
+# Output the minimized structure and the force on the dummy atom
+# ==============================================================
+
+unfix   freeze0
+fix     output1 all ave/time 1 1 1 c_fortd[1] c_fortd[2] c_fortd[3]  file force.${ii}.txt
+dump    dump2 all custom 1 dump.${nl}l.loop_${ii}.lammpstrj id mol type x y z
+run     0     
+undump dump2
+unfix   output1
+
+# =========================================================
+# Output data file
+# =========================================================
+
+#write_data  data.25.6nm.square.${nl}l.gr.min.${ii}
+write_data               data.periodic.${nl}l.t2G.min.${ii}
+
+next i
+#jump in.gr.flake.pbc.hbn.quasistatic loop_th        
+jump in.quasistatic loop_th
+
+# ==================================================
+# ================     The end     =================
+# ==================================================
+
+
+
+
+
